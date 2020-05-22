@@ -13,6 +13,10 @@ monthly_logs_clean <- monthly_logs %>%
   summarise(total = sum(count)) %>%
   unite(month_year, c("month", "year"))
 
+# monthly_logs_clean %>%
+#   split(f = .$package) %>%
+#   accumulate(., ~bind_rows(.x, .y)) %>%
+#   bind_rows(.id = "frame")
 
 # This plot isn't quite right because I couldn't get the cumulative
 # sum of downloads, just the static downloads (and the processed dataset
@@ -31,10 +35,108 @@ shared_logs %>%
 space_launches <- read.csv("space/launches.csv")
 dplyr::glimpse(space_launches)
 
+# Basic: Launches by year
 space_launches %>%
-  group_by(launch_year, state_code) %>%
-  summarize(launches = n()) %>%
-  SharedData$new(key = ~state_code) %>%
-  plot_ly(x = ~launch_year, y = ~launches, color = ~state_code) %>%
-  group_by(state_code) %>%
-  add_lines()
+  count(launch_year) %>%
+  plot_ly(x = ~launch_year, y = ~n) %>%
+  add_lines(fill = "tozeroy") %>%
+  layout(xaxis = list(title = "Year"),
+         yaxis = list(title = "Launches"))
+
+# Barchart version
+space_launches %>%
+  count(launch_year) %>%
+  plot_ly(x = ~launch_year, y = ~n) %>%
+  add_bars() %>%
+  layout(xaxis = list(title = "Year"),
+         yaxis = list(title = "Launches"))
+
+# table of launches by year, only by state agencies
+state_launches <- space_launches %>%
+  filter(agency_type == "state") %>%
+  count(launch_year, state_code)
+
+# create a ShareData object for plotting
+shared_launches <- state_launches %>% SharedData$new(key = ~state_code)
+
+# Create a line chart for launches by state, with highlighting
+state_plot <- shared_launches %>%
+  plot_ly(x = ~launch_year, y = ~n, color = ~state_code) %>%
+  add_lines() %>%
+  highlight()
+
+# Compare private and state agencies
+all_launches <- space_launches %>%
+  count(launch_year, agency_type)
+
+# See the two s-deiby-side!
+shared_launches <- all_launches %>% SharedData$new(key = ~agency_type)
+
+agencies_plot <- shared_launches %>%
+  plot_ly(x = ~launch_year, y = ~n, color = ~agency_type) %>%
+  add_lines() %>%
+  highlight()
+
+
+subplot(state_plot, agencies_plot)
+
+# Cumulative plots
+# Complete the state_launches data set
+annual_launches <- state_launches %>%
+  count(launch_year, state_code) %>%
+  complete(state_code, launch_year, fill = list(n = 0))
+
+# Create the cumulative data set
+cumulative_launches <- annual_launches %>%
+  split(f = .$state_code) %>%
+  accumulate(., ~bind_rows(.x, .y)) %>%
+  bind_rows(.id = "frame")
+
+# Create the cumulative animation
+cumulative_launches %>%
+  plot_ly(x = ~launch_year, y = ~n, color = ~state_code) %>%
+  add_lines(frame = ~frame, ids = ~state_code)
+
+# Linked views
+shared_launches <- SharedData$new(all_launches, key = ~agency_type)
+
+line_chart <- shared_launches %>%
+  plot_ly(x = ~launch_year, y = ~n, color = ~agency_type) %>%
+  add_lines() %>%
+  hide_legend()
+
+bar_chart <- shared_launches %>%
+  plot_ly(y = ~fct_reorder(agency_type, n), x = ~n, color = ~agency_type) %>%
+  count(agency_type) %>%
+  add_bars() %>%
+  layout(barmode = "overlay", yaxis = list(title = "")) %>%
+  hide_legend
+
+subplot(bar_chart, line_chart) %>%
+  hide_legend() %>%
+  highlight()
+
+bscols(
+  widths = c(4, NA),
+  line_chart %>% highlight(),
+  bar_chart %>% highlight()
+)
+
+# Highlight args: on = plotly_click, hover, or selected.
+# off = plotly_doubleclick, deselect, or relayout
+# persistent, dynamic, selectize can be T/F
+# color can also be specified
+
+# Selector widgets
+bscols(widths = c(2, NA),
+       list(filter_checkbox(id = "agency",
+                            label = "Agency type",
+                            shared_launches,
+                            ~agency_type),
+            filter_select(id = "agency2",
+                          label = "Agency type dropdown",
+                          shared_launches,
+                          ~agency_type)),
+       line_chart %>% highlight(on = "plotly_selected", off = "plotly_deselect"))
+
+
